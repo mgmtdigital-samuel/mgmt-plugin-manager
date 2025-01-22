@@ -1,0 +1,87 @@
+name: Deploy Plugins to All Sites
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Enables manual triggering
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Deploy plugins using WP CLI
+      - name: Deploy to Sites
+        run: |
+          # Map SSH credentials and paths
+          declare -A SITE_MAP=(
+            ["mgmtdigital@mgmtdigital.ssh.wpengine.net"]="~/sites/mgmtdigital"
+            ["anotheruser@anotheruser.ssh.wpengine.net"]="~/sites/anotheruser"
+          )
+
+          # Plugins to install with versions
+          declare -A PLUGINS=(
+            ["query-monitor"]="3.12"
+            ["classic-editor"]="" # Empty means the latest version
+          )
+
+          # Loop through each site
+          for CREDENTIALS in "${!SITE_MAP[@]}"
+          do
+            SITE_PATH="${SITE_MAP[$CREDENTIALS]}"
+            echo "Checking WP CLI availability on $CREDENTIALS at $SITE_PATH..."
+
+            # Check if WP CLI is installed
+            HAS_WP_CLI=$(ssh -o StrictHostKeyChecking=no $CREDENTIALS "
+              command -v wp >/dev/null 2>&1 && echo 'yes' || echo 'no'
+            ")
+
+            if [[ "$HAS_WP_CLI" == "yes" ]]; then
+              echo "WP CLI is available on $CREDENTIALS. Deploying plugins..."
+              
+              for PLUGIN in "${!PLUGINS[@]}"
+              do
+                PLUGIN_VERSION="${PLUGINS[$PLUGIN]}"
+                
+                # Check if the plugin is installed
+                IS_INSTALLED=$(ssh -o StrictHostKeyChecking=no $CREDENTIALS "
+                  wp plugin is-installed $PLUGIN --path=$SITE_PATH --allow-root && echo 'yes' || echo 'no'
+                ")
+
+                if [[ "$IS_INSTALLED" == "yes" ]]; then
+                  echo "Plugin $PLUGIN is already installed. Checking version..."
+                  
+                  # Get the installed version
+                  INSTALLED_VERSION=$(ssh -o StrictHostKeyChecking=no $CREDENTIALS "
+                    wp plugin get $PLUGIN --field=version --path=$SITE_PATH --allow-root
+                  ")
+
+                  # Update if necessary
+                  if [[ "$PLUGIN_VERSION" != "" && "$INSTALLED_VERSION" != "$PLUGIN_VERSION" ]]; then
+                    echo "Updating $PLUGIN to version $PLUGIN_VERSION..."
+                    ssh -o StrictHostKeyChecking=no $CREDENTIALS "
+                      wp plugin install $PLUGIN --version=$PLUGIN_VERSION --force --activate --path=$SITE_PATH --allow-root
+                    "
+                  else
+                    echo "$PLUGIN is already up-to-date (version $INSTALLED_VERSION)."
+                  fi
+                else
+                  echo "Installing $PLUGIN..."
+                  if [[ "$PLUGIN_VERSION" != "" ]]; then
+                    ssh -o StrictHostKeyChecking=no $CREDENTIALS "
+                      wp plugin install $PLUGIN --version=$PLUGIN_VERSION --activate --path=$SITE_PATH --allow-root
+                    "
+                  else
+                    ssh -o StrictHostKeyChecking=no $CREDENTIALS "
+                      wp plugin install $PLUGIN --activate --path=$SITE_PATH --allow-root
+                    "
+                  fi
+                fi
+              done
+            else
+              echo "WP CLI is not installed on $CREDENTIALS. Skipping site..."
+            fi
+          done
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
