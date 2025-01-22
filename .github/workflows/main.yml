@@ -25,7 +25,7 @@ jobs:
         run: |
           # Map WP Engine SSH credentials and paths
           declare -A SITE_MAP=(
-            ["mgmtdigita1stg@mgmtdigita1stg.ssh.wpengine.net"]="~/sites/mgmtdigita1stg"
+            ["mgmtdigita1stg@mgmtdigita1stg.ssh.wpengine.net"]="/home/wpe-user/sites/mgmtdigita1stg"
           )
 
           # Plugins to install with versions, activation, and auto-update flags
