@@ -30,7 +30,7 @@ jobs:
 
           # Plugins to install with versions, activation, and auto-update flags
           declare -A PLUGINS=(
-            ["query-monitor"]=":true:true"      # Install latest, activate it, enable auto-updates
+            ["query-monitor"]=":false:true"      # Install latest, activate it, enable auto-updates
           )
 
           # Loop through each site
