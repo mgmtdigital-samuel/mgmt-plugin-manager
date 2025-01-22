@@ -1,4 +1,4 @@
-name: Deploy Plugins to All Sites
+name: Deploy Plugins to WP Engine Sites
 
 on:
   push:
@@ -11,77 +11,98 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Deploy plugins using WP CLI
+      # Step 1: Set Up SSH with WP Engine Key
+      - name: Set Up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$WPENGINE_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+        env:
+          WPENGINE_SSH_KEY: ${{ secrets.WPENGINE_SSH_KEY }}
+
+      # Step 2: Deploy plugins using WP CLI
       - name: Deploy to Sites
         run: |
-          # Map SSH credentials and paths
+          # Map WP Engine SSH credentials and paths
           declare -A SITE_MAP=(
-            ["mgmtdigital@mgmtdigital.ssh.wpengine.net"]="~/sites/mgmtdigital"
-            ["anotheruser@anotheruser.ssh.wpengine.net"]="~/sites/anotheruser"
+            ["mgmtdigita1stg@mgmtdigita1stg.ssh.wpengine.net"]="~/sites/mgmtdigita1stg"
           )
 
-          # Plugins to install with versions
+          # Plugins to install with versions, activation, and auto-update flags
           declare -A PLUGINS=(
-            ["query-monitor"]="3.12"
-            ["classic-editor"]="" # Empty means the latest version
+            ["query-monitor"]=":true:true"      # Install latest, activate it, enable auto-updates
           )
 
           # Loop through each site
           for CREDENTIALS in "${!SITE_MAP[@]}"
           do
             SITE_PATH="${SITE_MAP[$CREDENTIALS]}"
-            echo "Checking WP CLI availability on $CREDENTIALS at $SITE_PATH..."
+            echo "Deploying plugins to $CREDENTIALS at $SITE_PATH"
 
             # Check if WP CLI is installed
-            HAS_WP_CLI=$(ssh -o StrictHostKeyChecking=no $CREDENTIALS "
+            HAS_WP_CLI=$(ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $CREDENTIALS "
               command -v wp >/dev/null 2>&1 && echo 'yes' || echo 'no'
             ")
 
             if [[ "$HAS_WP_CLI" == "yes" ]]; then
               echo "WP CLI is available on $CREDENTIALS. Deploying plugins..."
-              
-              for PLUGIN in "${!PLUGINS[@]}"
+
+              for PLUGIN_INFO in "${!PLUGINS[@]}"
               do
-                PLUGIN_VERSION="${PLUGINS[$PLUGIN]}"
-                
+                PLUGIN_VERSION_ACTIVATE="${PLUGINS[$PLUGIN_INFO]}"
+                PLUGIN="${PLUGIN_INFO}"
+                VERSION=$(echo "$PLUGIN_VERSION_ACTIVATE" | cut -d':' -f1)
+                ACTIVATE=$(echo "$PLUGIN_VERSION_ACTIVATE" | cut -d':' -f2)
+                AUTO_UPDATE=$(echo "$PLUGIN_VERSION_ACTIVATE" | cut -d':' -f3)
+
                 # Check if the plugin is installed
-                IS_INSTALLED=$(ssh -o StrictHostKeyChecking=no $CREDENTIALS "
+                IS_INSTALLED=$(ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $CREDENTIALS "
                   wp plugin is-installed $PLUGIN --path=$SITE_PATH --allow-root && echo 'yes' || echo 'no'
                 ")
 
                 if [[ "$IS_INSTALLED" == "yes" ]]; then
-                  echo "Plugin $PLUGIN is already installed. Checking version..."
-                  
-                  # Get the installed version
-                  INSTALLED_VERSION=$(ssh -o StrictHostKeyChecking=no $CREDENTIALS "
-                    wp plugin get $PLUGIN --field=version --path=$SITE_PATH --allow-root
-                  ")
-
-                  # Update if necessary
-                  if [[ "$PLUGIN_VERSION" != "" && "$INSTALLED_VERSION" != "$PLUGIN_VERSION" ]]; then
-                    echo "Updating $PLUGIN to version $PLUGIN_VERSION..."
-                    ssh -o StrictHostKeyChecking=no $CREDENTIALS "
-                      wp plugin install $PLUGIN --version=$PLUGIN_VERSION --force --activate --path=$SITE_PATH --allow-root
+                  echo "Plugin $PLUGIN is already installed."
+                  if [[ "$VERSION" != "" ]]; then
+                    echo "Updating $PLUGIN to version $VERSION..."
+                    ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $CREDENTIALS "
+                      wp plugin install $PLUGIN --version=$VERSION --force --path=$SITE_PATH --allow-root
                     "
-                  else
-                    echo "$PLUGIN is already up-to-date (version $INSTALLED_VERSION)."
                   fi
                 else
                   echo "Installing $PLUGIN..."
-                  if [[ "$PLUGIN_VERSION" != "" ]]; then
-                    ssh -o StrictHostKeyChecking=no $CREDENTIALS "
-                      wp plugin install $PLUGIN --version=$PLUGIN_VERSION --activate --path=$SITE_PATH --allow-root
+                  if [[ "$VERSION" != "" ]]; then
+                    ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $CREDENTIALS "
+                      wp plugin install $PLUGIN --version=$VERSION --path=$SITE_PATH --allow-root
                     "
                   else
-                    ssh -o StrictHostKeyChecking=no $CREDENTIALS "
-                      wp plugin install $PLUGIN --activate --path=$SITE_PATH --allow-root
+                    ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $CREDENTIALS "
+                      wp plugin install $PLUGIN --path=$SITE_PATH --allow-root
                     "
                   fi
+                fi
+
+                # Handle activation
+                if [[ "$ACTIVATE" == "true" ]]; then
+                  echo "Activating $PLUGIN..."
+                  ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $CREDENTIALS "
+                    wp plugin activate $PLUGIN --path=$SITE_PATH --allow-root
+                  "
+                fi
+
+                # Handle auto-updates
+                if [[ "$AUTO_UPDATE" == "true" ]]; then
+                  echo "Enabling auto-updates for $PLUGIN..."
+                  ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $CREDENTIALS "
+                    wp plugin auto-updates enable $PLUGIN --path=$SITE_PATH --allow-root
+                  "
+                else
+                  echo "Disabling auto-updates for $PLUGIN..."
+                  ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $CREDENTIALS "
+                    wp plugin auto-updates disable $PLUGIN --path=$SITE_PATH --allow-root
+                  "
                 fi
               done
             else
               echo "WP CLI is not installed on $CREDENTIALS. Skipping site..."
             fi
           done
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
